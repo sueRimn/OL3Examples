@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Icon Symbolizer</title>
+    <link rel="stylesheet" href="https://openlayers.org/en/v3.20.1/css/ol.css" type="text/css">
+    <!-- The line below is only needed for old environments like Internet Explorer and Android 4.x -->
+    <script
+        src="https://cdn.polyfill.io/v2/polyfill.min.js?features=requestAnimationFrame,Element.prototype.classList,URL">
+    </script>
+    <script src="https://openlayers.org/en/v3.20.1/build/ol.js"></script>
+    <script src="https://code.jquery.com/jquery-2.2.3.min.js"></script>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/js/bootstrap.min.js"></script>
+    <style>
+        #map {
+            position: relative;
+        }
+
+        #popup {
+            cursor: pointer;
+        }
+
+        .popupStyle {
+            position: relative;
+            width: 100px;
+            height: 50px;
+            text-align: center;
+            line-height: 100px;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.4);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map" class="map"></div>
+    <div id="popup">
+        <div class="popupStyle"></div>
+    </div>
+
+    <script>
+        var element = document.getElementById('popup');
+        var iconFeature = new ol.Feature({
+            geometry: new ol.geom.Point([0, 0]),
+            name: 'B001'
+        });
+        var lineStyle = new ol.style.Style({
+            stroke: new ol.style.Stroke({
+                color: '#ffcc33',
+                width: 3,
+                lineDash: [10, 10]
+            })
+        });
+        var line = new ol.geom.LineString([0, 0], [0, 0]);
+        var lineFeature = new ol.Feature(line);
+        var iconStyle = new ol.style.Style({
+            image: new ol.style.Icon( /** @type {olx.style.IconOptions} */ ({
+                anchor: [0.5, 46],
+                anchorXUnits: 'fraction',
+                anchorYUnits: 'pixels',
+                src: 'https://openlayers.org/en/v3.20.1/examples/data/icon.png'
+            }))
+        });
+
+        iconFeature.setStyle(iconStyle);
+
+        var vectorSource = new ol.source.Vector({
+            features: [iconFeature, lineFeature]
+        });
+
+        var vectorLayer = new ol.layer.Vector({
+            source: vectorSource,
+            style: [lineStyle],
+            updateWhileInteracting: true, //自动更新位置
+        });
+
+        var rasterLayer = new ol.layer.Tile({
+            source: new ol.source.TileJSON({
+                url: 'https://api.tiles.mapbox.com/v3/mapbox.geography-class.json?secure',
+                crossOrigin: ''
+            })
+        });
+
+        var map = new ol.Map({
+            layers: [rasterLayer, vectorLayer],
+            target: document.getElementById('map'),
+            view: new ol.View({
+                center: [0, 0],
+                zoom: 3
+            })
+        });
+        var popup = new ol.Overlay({
+            element: element,
+            positioning: 'bottom-center',
+            stopEvent: false,
+            dragging: false,
+            offset: [0, -50]
+        });
+        popup.setPosition([0, 0]);
+        map.addOverlay(popup);
+
+        // display popup on click
+        var dragPan;
+        map.getInteractions().forEach(function (interaction) {
+            if (interaction instanceof ol.interaction.DragPan) {
+                dragPan = interaction;
+            }
+        });
+
+        element.addEventListener('mousedown', function (evt) {
+            dragPan.setActive(false);
+            popup.set('dragging', true);
+            console.info('start dragging');
+        });
+        // var translateLine = new ol.interaction.Translate({
+        //   //features:new ol.Collection([lineFeature])
+        //   layers:new ol.Collection([popup])
+        // });
+        // map.addInteraction(translateLine);
+
+        // var coord;
+
+        // translateLine.on('translatestart',function (evt){
+        //   coord = popup.getCoordinates();
+        // });
+        // translateLine.on('translating', function (evt) {
+        //   line.setCoordinates([coord, evt.coordinate]);
+        // });
+        map.on('pointermove', function (evt) {
+            var startPoint = iconFeature.getGeometry().getCoordinates();
+            if (popup.get('dragging')) {
+                var dd2 = map.getPixelFromCoordinate(evt.coordinate);
+                var newX = dd2[0] - 0; //减去偏移量
+                var newY = dd2[1] - (-50);
+                var newPoint = map.getCoordinateFromPixel([newX, newY]);
+                popup.setPosition(newPoint);
+                lineFeature.getGeometry().setCoordinates([startPoint, evt.coordinate]);
+                //   }
+
+            }
+        });
+        map.on('pointerup', function (evt) {
+            if (popup.get('dragging') === true) {
+                console.info('stop dragging');
+                dragPan.setActive(true);
+                popup.set('dragging', false);
+            }
+        });
+    </script>
+</body>
+
+</html>

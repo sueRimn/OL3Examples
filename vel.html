@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Flight animation example</title>
+    <!-- <link rel="stylesheet" href="./hint.min.css"> -->
+    <script src="https://code.jquery.com/jquery-1.11.2.min.js"></script>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/js/bootstrap.min.js"></script>
+    <link rel="stylesheet" href="https://openlayers.org/en/v3.20.1/css/ol.css" type="text/css">
+    <script src="https://openlayers.org/en/v3.20.1/build/ol.js"></script>
+    <script src="./build/geodesic.js"></script>
+    <style>
+        html,
+        body,
+        #map {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #map {
+            position: absolute;
+            z-index: 1;
+            top: 0;
+            bottom: 0;
+        }
+
+        #geo-marker {
+            cursor: move;
+            color: #fced1f;
+            width: 40px;
+            height: 30px;
+            text-align: center;
+            line-height: 30px;
+            background-color: rgba(14, 14, 14, 0.3);
+            opacity: 0.8;
+        }
+
+        .pop-label {
+            position: relative;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map" class="map">
+        <div class="row">
+            显示/隐藏：
+            <input type="checkbox" checked onclick="checkTrack(this);" />航迹
+            <input type="checkbox" checked onclick="checkVel(this);" />速度矢量线
+            <input name="" id="addAirplane" class="btn btn-primary startAnimate" type="button" value="start">
+        </div>
+    </div>
+    <div id="geo-marker">
+        <h4 class="pop-label"></h4>
+    </div>
+    <script type="module">
+        import LatLon from 'https://cdn.jsdelivr.net/gh/chrisveness/geodesy@2.0.0/latlon-spherical.min.js'
+  
+        /**
+         * @name: 相关样式和图层：点 航迹线 飞机  标牌
+         * @test: test font
+         * @msg: 
+         * @param {type} 
+         * @return: 
+         */
+        //样式
+        let point_style = new ol.style.Style({//预测点
+            image:new ol.style.Circle({
+                radius:2,
+                snapToPixel:false,
+                fill:new ol.style.Fill({
+                    color:'#333'
+                }),
+                stroke:new ol.style.Stroke({
+                    color:"#333",
+                })
+            })
+        })
+        let route_style = new ol.style.Style({//航迹线
+            stroke:new ol.style.Stroke({
+                width:2,
+                color: 'yellow'
+            }),
+            zIndex:2
+        });
+        let vel_style = new ol.style.Style({//速度矢量线
+            stroke:new ol.style.Stroke({ 
+                color: '#333',
+                width: 1,
+            })
+        });
+        //创建轨迹线
+        let trackLine = new ol.geom.LineString([]); 
+        //速度矢量线
+        let velLine = new ol.geom.LineString([]);
+        //矢量图层层
+        let aircfaftLayer = new ol.layer.Vector({//飞机图层
+            source:new ol.source.Vector(),
+            updateWhileInteracting: true,
+            updateWhileAnimating: true
+        })
+        let flightTrackLayer = new ol.layer.Vector({//航迹线图层
+            source:new ol.source.Vector({
+                features:[
+                    new ol.Feature({
+                        geometry:trackLine
+                    })
+                ]
+            }),
+            style:route_style,
+            updateWhileInteracting: true,//拖拽时自动更新位置 顺滑拖拽
+        });
+        let velLayer = new ol.layer.Vector({//速度矢量线图层
+            source:new ol.source.Vector(),
+            updateWhileInteracting: true,
+            updateWhileAnimating: true
+        });
+       /*
+         * @name: 初始化地图
+         * @description: 
+         * @param {type} none
+         * @return: 
+           
+        */
+        let center = new ol.proj.fromLonLat([104.06250000000001, 30.65681556429287]);
+        //地图
+        let map = new ol.Map({
+            //图层顺序自下而上
+            layers: [
+                new ol.layer.Tile({
+                    source: new ol.source.OSM({ })
+                }),flightTrackLayer,velLayer,aircfaftLayer,
+            ],
+            renderer: 'canvas',
+            target: 'map',
+            view: new ol.View({
+                center: center,
+                zoom: 6
+            })
+        });
+        
+        /**
+         * @name: 飞机  标牌 样式
+         * @description: 
+         * @param {type} none
+         * @return: 
+         */
+        //标牌叠加层 + 指引线
+        let markerEl = document.getElementById('geo-marker');//标牌
+        let marker = new ol.Overlay({
+            positioning: 'bottom-center',
+            stopEvent: false,
+            dragging: false,
+            offset: [0, -10],
+            element: markerEl,
+            stopEvent: false
+        });
+        map.addOverlay(marker);
+        
+        //飞机样式 以点代替飞机图片
+        function createGoodStyle() {
+            return new ol.style.Style({
+                image:new ol.style.Circle({//点状模拟飞机
+                    radius:6,
+                    snapToPixel:false,
+                    fill:new ol.style.Fill({
+                        color:'yellow'
+                    }),
+                    stroke:new ol.style.Stroke({
+                        color:"#333",
+                        width:2
+                    })
+                })
+                
+            });
+        }
+        //设置地图中心
+        let centerAir = val => {
+            map.getView().setCenter(val);
+        }
+        /**
+         * @name: 加载数据
+         * @description: 
+         * @param {type} none
+         * @return: 
+         */
+        //添加飞机 + 更新位置
+        
+        const KTS2KPH = 1.85200;//1 knot (kt) = 1.85200 kilometer per hour (kph)
+        const NM2KM = 1.852;
+        const pred_secs = 5 * 60; //5分钟
+        const bearing = 90; //航向
+        let coords = [], speedMH = [], flightData, intervalId, interval = 1000, i = 0;
+        let from , to, distance_whole, tiem_whole, distance_cur, point_cur, point_next;
+        const url = './data//vel.json';
+        let theAirplane = new ol.Feature([]);
+
+        $('.startAnimate').click(() => {
+            //加载坐标数据
+            $.ajax({
+                url: url,
+                dataType: 'json',
+                success: function (response) {
+                    console.log("飞行开始");
+                    flightData = response.data;
+                    coords = flightData.map(obj => {//坐标集合
+                        return obj[0];
+                    })
+                    speedMH = flightData.map(obj => {//速度集合
+                        return obj[1];
+                    })
+                    //飞机
+                    theAirplane.setId(response.aircraftNum);
+                    theAirplane.setStyle(createGoodStyle());
+                    aircfaftLayer.getSource().addFeature(theAirplane);
+
+                    //预测点
+                    let vel_point = new ol.Feature([]);
+                    vel_point.setStyle(point_style);
+                    velLayer.getSource().addFeature(vel_point);
+
+                    //模拟飞行    
+                    intervalId = setInterval(() => {
+                        let position;
+                        position = ol.proj.fromLonLat(coords[i]);
+
+                        //标牌
+                        marker.setPosition(position);
+                        markerEl.innerHTML = response.aircraftNum;//简标牌
+
+                        //飞机
+                        theAirplane.setGeometry(new ol.geom.Point(position));
+
+                        //航迹
+                        let point = new ol.proj.transform(coords[i], 'EPSG:4326', 'EPSG:3857');
+                        trackLine.appendCoordinate(point);
+
+                        //以飞机当前位置为地图中心
+                        centerAir(position);
+
+                        
+                        
+                        //速度矢量线
+                        from = new LatLon(coords[0][1], coords[0][0]);//起点
+                        to = new LatLon(coords[coords.length - 1][1], coords[coords.length - 1][0]);//终点
+                        // console.log(from, to);
+
+                        distance_whole = from.distanceTo(to) / 1000;// km 总里程
+                        tiem_whole = distance_whole / speedMH[i] / KTS2KPH;// hour 总耗时
+                        // console.log(distance_whole, tiem_whole);
+
+                        point_cur = new LatLon(coords[i][1], coords[i][0]);//当前坐标
+                        distance_cur = KTS2KPH * speedMH[i] * ( pred_secs * interval  / 3600); //已经过里程
+                        point_next = point_cur.destinationPoint(distance_cur, bearing); //预测5分钟后所在的坐标点
+                        // console.log( distance_whole, tiem_whole, distance_cur, point_next);
+                        let pointCur = ol.proj.fromLonLat([point_cur._lon, point_cur._lat]);
+                        let pointNext = ol.proj.fromLonLat([point_next._lon, point_next._lat]);
+
+                        let pointNextArray = Array();
+                        pointNextArray.push(pointNext);
+                        console.log(pointNextArray);
+
+                        //预测点
+                        vel_point.setGeometry(new ol.geom.Point(pointNext));
+                        
+                        //速度矢量线
+                        let velFeature = new ol.Feature(velLine);
+                        velFeature.setStyle(vel_style);
+                        velLine.setCoordinates([pointCur, pointNext]); //绘制速度矢量线
+                        velLayer.getSource().addFeature(velFeature);
+
+                        i++;
+                        if (i === flightData.length) {
+                            clearInterval(intervalId);
+                            console.log("飞行结束");
+                        }
+
+                    }, interval);
+                
+                }
+            })
+        })
+        /*
+         * 控制图层显示与隐藏
+         * @name: 
+         * @description: 
+         * @param {type} none
+         * @return: 
+         */
+       // 隐藏显示航迹图层
+       function checkTrack(elem) {
+        flightTrackLayer.setVisible(elem.checked);
+       }
+
+       // 隐藏显示速度矢量线图层
+       function checkVel(elem) {
+           elem = checked;
+        velLayer.setVisible(elem.checked);
+       }
+      
+    </script>
+</body>
+
+</html>
